@@ -1,0 +1,144 @@
+---
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```
+
+---
+title: "Human Activity Recognition Analysis"
+author: "Sudhir Tiwari";
+date: "27 Sep, 2015"
+output: pdf_document
+---
+## Executive Summary
+
+Human Activity Recognition (HAR) is a research area to identify different activities based on the data recorded by various sensors. There are many potential applications for HAR, like: elderly monitoring, life log systems for monitoring energy expenditure and for supporting weight-loss programs, and digital assistants for weight lifting exercises.
+
+This report is to build the prediction model that can predict the type of activity performed by a person, based on the data collected from sensors. Research data has been collected from here -
+http://groupware.les.inf.puc-rio.br/har
+
+The purpose of this investivgation is to identify "how (well)" an activity was performed by a person. The measurements are taken by on-body sensors, with five different set of activities. Participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. 
+
+The model was built using random forest algorithm. This model has successfully predicted the correct class of the activties with 97.84% out of sample accuracy and 100% accuracy on the 20 test cases (measured by Coursera Practicle Machine Learning).
+
+## Data Analysis
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.
+
+```{r echo = FALSE}
+library(caret)
+library(kernlab)
+library(rpart)
+library(randomForest)
+```
+
+Data can be downloaded from the links above and placed in the working directory.
+```{r echo = TRUE}
+set.seed(16183)
+
+data<- read.csv("pml-training.csv", na.strings = c("NA", ""), stringsAsFactors = F)
+```
+
+We have cleaned the data by removing columns with NULL values - these are derived columns and have less significance towards the prediction.
+
+Cleaned training data has been divide into two parts - training set and testing set. We will use training set to train the prediction algorithm and testing set to find the accuracy of the model.
+
+```{r echo = TRUE, cache=TRUE}
+completeColumns <- apply(!is.na(data), 2, all)
+
+HAR <- data[, completeColumns]
+HAR <- HAR[, -c(1, 2, 3, 4, 5, 6, 7)]
+HAR$classe <- as.factor(HAR$classe)
+
+# print predictors on which model is build 
+print(names(HAR))
+
+# create training set and testing set
+inTrain <- createDataPartition(HAR$classe, p = 0.7, list = F)
+training <- HAR[inTrain, ]
+testing <- HAR[-inTrain, ]
+
+table(training$classe)
+table(testing$classe)
+```
+
+Since the different class of activities are depending on the body movement, let's have a look at the total acceleration across all sensors and see if there is actually a separation of activities based on the sensors acceleration.
+
+```{r echo = TRUE}
+
+ featurePlot(x = training[, c("total_accel_belt", "total_accel_arm", "total_accel_dumbbell",
+        "total_accel_forearm")], y = training$classe, plot = "box", colours = training$classe)
+     
+```
+
+There is a separation of the class from sensor's acceleration. We can build the model to identify the activity based on sensor measurement data.
+
+## Building the Model
+We will use Random Forest algorithm to build the prediction model. Random Forest model is tree based classification model, using multiple decision trees. 
+
+We will use caret package in R for this purpose.
+
+``` {r echo = TRUE}
+fitRF1 <- train(training$classe ~ ., data = training[, -53], method = "rf")
+     
+print(fitRF1)
+```
+
+Our very first model use all 52 predictors in the training set. Let's have a look at the model accuracy and how well it has done by comparing the model prediction on the testing set data.
+
+``` {r echo  = TRUE}
+# predict activity on the testing data using above model
+classPrediction1 <- predict(fitRF1, testing[, -53])
+confusionMatrix(reference = testing$classe, data = classPrediction1)
+
+```
+
+### Model Tuning and Testing
+Above model has out of sample accuracy about 98.81%. This model is computationally very costly due to large number of features. We can further tune the model which has less number of feature (thus less computation cost), without or minimal loss of predictability. 
+
+Since the sensors are to detect the direction of the motion, it is likely that one sensor's measurement (x,y,x directions) is correlated to other sensor's measurement. We can find such correlated features by running the Principle Component Analysis on the data. We will extract the features which can explain up to 99% variability in the training set.
+
+``` {r echo = TRUE}
+ # check for variables which are highly correlated
+preProc <- preProcess(training[,  -53], method = "pca", thresh = 0.99)
+
+# training data and testing data should be passed through same PCA analysis
+trainPCA <- predict(preProc, training[, -53])
+testPCA <- predict(preProc, testing[, -53])
+
+print (preProc)
+```
+
+To avoid overfitting the model on the training set, we will perform cross validation on the model. For this purpose, we have selected 3 fold cross validation.
+
+``` {r echo = TRUE}
+fitControl <- trainControl(method = "cv", number = 3)
+
+```
+
+Now, we will build the model again by using identified principle components in the training set and apply 3 fold cross validation to generalize the model.
+
+``` {r echo = TRUE}
+fitRF2 <- train(training$classe ~ ., trControl = fitControl, data = trainPCA, method = "rf")
+
+print(fitRF2)
+ggplot(fitRF2)
+```
+
+### Model Accuracy
+We will predict the activity class on the testing set to find the model accuracy.
+
+```{r echo = TRUE}
+classPrediction2 <- predict(fitRF2, testPCA)
+     
+confusionMatrix(testing$classe, classPrediction2)
+```
